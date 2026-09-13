@@ -11,41 +11,49 @@ from typing import Dict, Any
 # ==============================================================================
 
 TOOLS_SCHEMA = [
-    # Tool 1: Đã được định nghĩa mẫu sẵn cho Học viên tham khảo
+    # Tool 1: Tra cứu hồ sơ dinh dưỡng của khách hàng
     {
-        "name": "academic_query",
-        "description": "Tra cứu hồ sơ và thông tin học vụ của sinh viên VinUni bằng mã sinh viên.",
+        "name": "nutrition_query",
+        "description": "Tra cứu hồ sơ dinh dưỡng của khách hàng bằng mã khách hàng.",
         "parameters": {
             "type": "object",
             "properties": {
-                "student_id": {
+                "customer_id": {
                     "type": "string",
-                    "description": "Mã sinh viên cần tra cứu (ví dụ: 'SV2026001')"
+                    "description": "Mã khách hàng cần tra cứu (ví dụ: 'KH2026001')"
                 }
             },
-            "required": ["student_id"]
+            "required": ["customer_id"]
         }
     },
     
     # --------------------------------------------------------------------------
-    # TODO 1.2: HỌC VIÊN HOÀN THIỆN TOOL SCHEMA CHO 'schedule_appointment'
-    # 🎯 YÊU CẦU THIẾT KẾ SCHEMA (JSON SCHEMA STANDARD):
-    # 1. Tool dùng để đặt lịch hẹn tư vấn học vụ với Cố vấn học tập VinUni.
-    # 2. Thiết kế các tham số (properties) để LLM trích xuất:
-    #    - student_id (string): Mã sinh viên cần đặt lịch (ví dụ: 'SV2026001')
-    #    - datetime_str (string): Thời gian hẹn (ví dụ: '14:00 15/09/2026')
-    #    - advisor_name (string): Tên cố vấn học tập
-    # 3. Khai báo danh sách các trường bắt buộc (required).
+    # Tool 2: Lập thực đơn theo mục tiêu và ràng buộc dinh dưỡng
     # --------------------------------------------------------------------------
     {
-        "name": "schedule_appointment",
-        "description": "Đặt lịch hẹn tư vấn học vụ với Cố vấn học tập VinUni.",
+        "name": "create_meal_plan",
+        "description": "Tạo thực đơn theo ngày, mục tiêu calo và ràng buộc dị ứng hoặc kiêng cữ.",
         "parameters": {
             "type": "object",
             "properties": {
-                # TODO 1.2: Khai báo các thuộc tính tham số cho Tool tại đây...
+                "date_range": {
+                    "type": "string",
+                    "description": "Khoảng ngày cần lập thực đơn, ví dụ: 'ngày mai' hoặc '3 ngày tới'."
+                },
+                "calorie_target": {
+                    "type": "integer",
+                    "description": "Mục tiêu calo mỗi ngày."
+                },
+                "dietary_restrictions": {
+                    "type": "string",
+                    "description": "Dị ứng, thực phẩm cần tránh hoặc chế độ ăn đặc biệt."
+                },
+                "meal_time": {
+                    "type": "string",
+                    "description": "Thời điểm ăn, ví dụ: 'buổi sáng', 'buổi trưa' hoặc 'buổi tối'."
+                }
             },
-            "required": [] # TODO 1.2: Khai báo danh sách các trường bắt buộc tại đây...
+            "required": ["date_range", "calorie_target", "dietary_restrictions", "meal_time"]
         }
     }
 ]
@@ -55,57 +63,60 @@ TOOLS_SCHEMA = [
 # ==============================================================================
 
 MOCK_DATABASE = {
-    "SV2026001": {
-        "full_name": "Nguyễn Văn An",
-        "class": "AI-K4",
-        "gpa": 3.85,
-        "email": "an.nv@vinuni.edu.vn",
-        "status": "Đang học",
-        "advisor": "PGS.TS Nguyễn Văn A"
+    "KH2026001": {
+        "full_name": "Nguyễn Minh An",
+        "calorie_target": 1800,
+        "protein_target_g": 120,
+        "allergies": ["hải sản"],
+        "dietary_goal": "giảm mỡ, duy trì cơ"
     },
-    "SV2026002": {
-        "full_name": "Trần Thị Bình",
-        "class": "AI-K4",
-        "gpa": 3.60,
-        "email": "binh.tt@vinuni.edu.vn",
-        "status": "Đang học",
-        "advisor": "TS. Lê Thị B"
+    "KH2026002": {
+        "full_name": "Trần Hà Bình",
+        "calorie_target": 2200,
+        "protein_target_g": 140,
+        "allergies": [],
+        "dietary_goal": "duy trì cân nặng"
     }
 }
 
 
-def execute_academic_query(student_id: str) -> str:
-    """Thực thi tra cứu học vụ theo mã sinh viên"""
-    student = MOCK_DATABASE.get(student_id.strip().upper())
-    if student:
+def execute_nutrition_query(customer_id: str) -> str:
+    """Thực thi tra cứu hồ sơ dinh dưỡng theo mã khách hàng."""
+    customer = MOCK_DATABASE.get(customer_id.strip().upper())
+    if customer:
         return json.dumps({
             "status": "SUCCESS",
-            "student_id": student_id,
-            "data": student
+            "customer_id": customer_id.strip().upper(),
+            "data": customer
         }, ensure_ascii=False)
     else:
         return json.dumps({
             "status": "NOT_FOUND",
-            "message": f"Không tìm thấy dữ liệu sinh viên có mã '{student_id}'"
+            "message": f"Không tìm thấy hồ sơ dinh dưỡng của khách hàng có mã '{customer_id}'"
         }, ensure_ascii=False)
 
 
-def execute_schedule_appointment(student_id: str, datetime_str: str, advisor_name: str = "PGS.TS Nguyễn Văn A") -> str:
-    """Thực thi đặt lịch hẹn tư vấn học vụ"""
+def execute_create_meal_plan(
+    date_range: str,
+    calorie_target: int,
+    dietary_restrictions: str,
+    meal_time: str
+) -> str:
+    """Tạo thực đơn cụ thể theo calo, ràng buộc và thời điểm ăn."""
     return json.dumps({
         "status": "SUCCESS",
-        "booking_id": f"BK-{student_id}-99",
-        "student_id": student_id,
-        "datetime": datetime_str,
-        "advisor": advisor_name,
-        "message": f"Đặt lịch thành công cho sinh viên {student_id} với {advisor_name} vào lúc {datetime_str}."
+        "date_range": date_range,
+        "calorie_target": calorie_target,
+        "dietary_restrictions": dietary_restrictions,
+        "meal_time": meal_time,
+        "nutrition_note": "Hãy dùng các ràng buộc này để xây dựng thực đơn cụ thể."
     }, ensure_ascii=False)
 
 
 # Router gọi tool thực tế
 TOOL_ROUTER = {
-    "academic_query": execute_academic_query,
-    "schedule_appointment": execute_schedule_appointment
+    "nutrition_query": execute_nutrition_query,
+    "create_meal_plan": execute_create_meal_plan
 }
 
 def dispatch_tool_call(tool_name: str, arguments: Dict[str, Any]) -> str:

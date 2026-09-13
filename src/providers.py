@@ -1,5 +1,5 @@
 """
-🔌 MULTI-PROVIDER LLM ADAPTER (Google Gemini, OpenAI & Offline Mock)
+🔌 MULTI-PROVIDER LLM ADAPTER (Google Gemini, OpenAI, Anthropic & Offline Mock)
 Hỗ trợ Native Tool Calling và chuyển đổi linh hoạt qua biến môi trường LLM_PROVIDER.
 """
 
@@ -38,25 +38,25 @@ class MockOfflineProvider(BaseLLMProvider):
         prompt_lower = prompt.lower()
         
         # Mô phỏng nhận diện intent gọi Tool
-        if "sv2026001" in prompt_lower and "đặt lịch" in prompt_lower:
+        if "tạo" in prompt_lower and "thực đơn" in prompt_lower:
             return {
                 "type": "tool_call",
-                "tool_name": "schedule_appointment",
-                "arguments": {"student_id": "SV2026001", "datetime_str": "14:00 15/09/2026", "advisor_name": "PGS.TS Nguyễn Văn A"},
-                "thought": "Người dùng yêu cầu đặt lịch hẹn tư vấn cho sinh viên SV2026001. Tôi sẽ gọi tool schedule_appointment."
+                "tool_name": "create_meal_plan",
+                "arguments": {"date_range": "ngày mai", "calorie_target": 1800, "dietary_restrictions": "không có hải sản", "meal_time": "buổi tối"},
+                "thought": "Người dùng yêu cầu tạo thực đơn. Tôi sẽ gọi tool create_meal_plan."
             }
-        elif "sv2026001" in prompt_lower or "tra cứu" in prompt_lower:
+        elif "kh2026001" in prompt_lower or "kh9999999" in prompt_lower or "tra cứu" in prompt_lower:
             return {
                 "type": "tool_call",
-                "tool_name": "academic_query",
-                "arguments": {"student_id": "SV2026001"},
-                "thought": "Người dùng muốn tra cứu thông tin học vụ của sinh viên SV2026001. Tôi sẽ gọi tool academic_query."
+                "tool_name": "nutrition_query",
+                "arguments": {"customer_id": "KH9999999" if "kh9999999" in prompt_lower else "KH2026001"},
+                "thought": "Người dùng muốn tra cứu hồ sơ dinh dưỡng. Tôi sẽ gọi tool nutrition_query."
             }
         else:
             return {
                 "type": "text",
-                "content": f"[Mock Agent Response]: Xin chào! Quy chế học vụ VinUni yêu cầu sinh viên tích lũy tối thiểu 120 tín chỉ và duy trì GPA trên 2.0 để tốt nghiệp.",
-                "thought": "Câu hỏi chung về quy chế học vụ, trả lời trực tiếp không cần gọi Tool."
+                "content": "[Mock Agent Response]: Calo cung cấp năng lượng, còn protein hỗ trợ xây dựng và phục hồi cơ bắp.",
+                "thought": "Câu hỏi kiến thức dinh dưỡng chung, trả lời trực tiếp không cần gọi Tool."
             }
 
 
@@ -211,6 +211,80 @@ class OpenAIProvider(BaseLLMProvider):
             return MockOfflineProvider().generate_with_tools(prompt, tools_schema, system_prompt)
 
 
+class AnthropicProvider(BaseLLMProvider):
+    """Anthropic Provider hỗ trợ native tool calling."""
+    def __init__(self, api_key: str = None, model: str = None):
+        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        self.model_name = model or os.getenv("LLM_MODEL") or "claude-haiku-4-5-20251001"
+
+    def generate(self, prompt: str, system_prompt: str = "") -> str:
+        if not self.api_key or self.api_key.startswith("your_"):
+            return "[Anthropic Error]: Chưa cấu hình ANTHROPIC_API_KEY trong file .env!"
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=self.api_key, timeout=10.0, max_retries=0)
+            response = client.messages.create(
+                model=self.model_name,
+                max_tokens=1024,
+                system=system_prompt or anthropic.NOT_GIVEN,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return "".join(block.text for block in response.content if block.type == "text")
+        except Exception as e:
+            return f"[Anthropic Exception]: {str(e)}"
+
+    def generate_with_tools(self, prompt: str, tools_schema: List[Dict[str, Any]], system_prompt: str = "") -> Dict[str, Any]:
+        if not self.api_key or self.api_key.startswith("your_"):
+            print("ℹ️ [Anthropic Provider]: Chưa tìm thấy ANTHROPIC_API_KEY hợp lệ. Tự động chuyển sang Mock Offline.")
+            return MockOfflineProvider().generate_with_tools(prompt, tools_schema, system_prompt)
+
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=self.api_key, timeout=10.0, max_retries=0)
+            tools = [
+                {
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "input_schema": tool.get("parameters", {"type": "object", "properties": {}})
+                }
+                for tool in tools_schema
+                if tool.get("name")
+            ]
+            response = client.messages.create(
+                model=self.model_name,
+                max_tokens=1024,
+                system=system_prompt or anthropic.NOT_GIVEN,
+                tools=tools or anthropic.NOT_GIVEN,
+                messages=[{"role": "user", "content": prompt}]
+            )
+
+            tool_calls = [block for block in response.content if block.type == "tool_use"]
+            if tool_calls:
+                call = tool_calls[0]
+                args = dict(call.input) if call.input else {}
+                return {
+                    "type": "tool_call",
+                    "tool_name": call.name,
+                    "arguments": args,
+                    "thought": f"Anthropic quyết định gọi công cụ '{call.name}' với tham số: {json.dumps(args, ensure_ascii=False)}"
+                }
+
+            text = "".join(block.text for block in response.content if block.type == "text")
+            return {
+                "type": "text",
+                "content": text,
+                "thought": "Anthropic phản hồi trực tiếp bằng văn bản (không cần gọi công cụ)."
+            }
+        except Exception as e:
+            error_message = f"Anthropic API error: {str(e)}"
+            print(f"⚠️ [Anthropic API Warning]: {error_message}")
+            return {
+                "type": "error",
+                "content": error_message,
+                "thought": "Không thể nhận phản hồi từ Anthropic API."
+            }
+
+
 def get_llm_provider() -> BaseLLMProvider:
     """Factory function khởi tạo Provider theo LLM_PROVIDER env variable"""
     provider_type = os.getenv("LLM_PROVIDER", "gemini").lower()
@@ -225,6 +299,12 @@ def get_llm_provider() -> BaseLLMProvider:
         key = os.getenv("OPENAI_API_KEY")
         if key and key != "your_openai_api_key_here":
             return OpenAIProvider()
+        else:
+            return MockOfflineProvider()
+    elif provider_type == "anthropic":
+        key = os.getenv("ANTHROPIC_API_KEY")
+        if key and not key.startswith("your_"):
+            return AnthropicProvider()
         else:
             return MockOfflineProvider()
     elif provider_type == "mock":
